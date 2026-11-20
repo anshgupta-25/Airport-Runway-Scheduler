@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runway Scheduler</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ============ Header: departure-board style stats ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-sign">RWY</span>
+      <div>
+        <h1>Runway Scheduler</h1>
+        <p>Landing &amp; takeoff sequencing with a priority queue</p>
+      </div>
+    </div>
+    <dl class="board" id="stats"></dl>
+  </header>
+
+  <main class="layout">
+
+    <!-- ============ Left column: inputs ============ -->
+    <aside class="sidebar">
+
+      <section class="panel">
+        <h2 class="panel-title">New request</h2>
+        <form id="flight-form" class="form" autocomplete="off">
+          <label class="field">
+            <span>Flight ID</span>
+            <input name="flightId" placeholder="AI101" maxlength="8" required>
+          </label>
+
+          <div class="field">
+            <span>Operation</span>
+            <div class="segmented">
+              <label><input type="radio" name="type" value="arrival" checked><span>Arrival</span></label>
+              <label><input type="radio" name="type" value="departure"><span>Departure</span></label>
+            </div>
+          </div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Requested time</span>
+              <input name="time" type="time" value="06:30" required>
+            </label>
+            <label class="field">
+              <span>Priority</span>
+              <select name="priority">
+                <option value="1">1 · Highest</option>
+                <option value="2">2</option>
+                <option value="3" selected>3 · Normal</option>
+                <option value="4">4</option>
+                <option value="5">5 · Lowest</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="check">
+            <input type="checkbox" name="emergency">
+            <span>Emergency — jumps ahead of everyone</span>
+          </label>
+
+          <p class="form-error" id="form-error" role="alert"></p>
+          <button class="btn btn-dark" type="submit">Add to queue</button>
+        </form>
+
+        <div class="quick-actions">
+          <button class="btn btn-ghost" id="btn-sample">Load sample</button>
+          <button class="btn btn-ghost" id="btn-random">+25 random</button>
+          <button class="btn btn-ghost btn-danger" id="btn-clear">Clear all</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Runways</h2>
+          <button class="link-btn" id="btn-add-runway">+ Add</button>
+        </div>
+        <p class="hint">Open intervals as <code>HH:MM-HH:MM</code>, comma separated.</p>
+        <div id="runway-list" class="runway-list"></div>
+        <p class="form-error" id="runway-error" role="alert"></p>
+        <button class="btn btn-ghost btn-block" id="btn-apply-runways">Apply runway changes</button>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel-title">Settings</h2>
+        <div class="field-row">
+          <label class="field">
+            <span>Landing occupies</span>
+            <div class="suffix-input"><input id="dur-arrival" type="number" min="1" max="60" value="4"><em>min</em></div>
+          </label>
+          <label class="field">
+            <span>Takeoff occupies</span>
+            <div class="suffix-input"><input id="dur-departure" type="number" min="1" max="60" value="3"><em>min</em></div>
+          </label>
+        </div>
+        <label class="field">
+          <span>Animation speed</span>
+          <input id="speed" type="range" min="80" max="900" step="20" value="420" class="range">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="animate" checked>
+          <span>Animate heap operations</span>
+        </label>
+      </section>
+    </aside>
+
+    <!-- ============ Right column: outputs ============ -->
+    <div class="content">
+
+      <section class="panel heap-panel">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">Priority queue <span class="tag">binary min-heap</span></h2>
+            <p class="hint">Order: emergency → priority → requested time → flight ID</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn btn-sign" id="btn-next">Schedule next</button>
+            <button class="btn btn-ghost" id="btn-all">Schedule all</button>
+            <button class="btn btn-ghost" id="btn-replan" title="Put every flight back in the queue and schedule again">Re-plan</button>
+          </div>
+        </div>
+
+        <div class="heap-tree" id="heap-tree"></div>
+        <div class="heap-array" id="heap-array"></div>
+        <div class="caption" id="heap-caption">Add a flight to see the heap.</div>
+      </section>
+
+      <section class="panel queue-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Waiting <span class="count" id="pending-count">0</span></h2>
+          <span class="hint">in service order</span>
+        </div>
+        <ol class="strips" id="pending-list"></ol>
+      </section>
+
+      <section class="panel timeline-panel">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">Runway timeline</h2>
+            <p class="hint">Thin line before a block = time the flight waited.</p>
+          </div>
+          <div class="legend">
+            <span><i class="sw sw-arr"></i>Arrival</span>
+            <span><i class="sw sw-dep"></i>Departure</span>
+            <span><i class="sw sw-emg"></i>Emergency</span>
+            <span><i class="sw sw-closed"></i>Closed</span>
+            <select id="zoom" class="zoom" aria-label="Zoom">
+              <option value="3">Zoom 1×</option>
+              <option value="6">Zoom 2×</option>
+              <option value="12" selected>Zoom 4×</option>
+              <option value="20">Zoom 8×</option>
+            </select>
+          </div>
+        </div>
+        <div class="timeline" id="timeline"></div>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Schedule</h2>
+          <div class="filters" id="filters">
+            <button class="chip is-active" data-filter="all">All</button>
+            <button class="chip" data-filter="delayed">Delayed</button>
+            <button class="chip" data-filter="emergency">Emergency</button>
+            <button class="chip" data-filter="unscheduled">Unscheduled</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Flight</th><th>Op</th><th>Prio</th><th>Requested</th>
+                <th>Runway</th><th>Slot</th><th>Delay</th><th>Note</th>
+              </tr>
+            </thead>
+            <tbody id="schedule-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <h2 class="panel-title">Operation log</h2>
+        <ol class="log" id="log"></ol>
+      </section>
+    </div>
+  </main>
+
+  <!-- Core logic (no UI code) -->
+  <script src="js/time.js"></script>
+  <script src="js/minHeap.js"></script>
+  <script src="js/runwayTimeline.js"></script>
+  <script src="js/scheduler.js"></script>
+  <script src="js/sampleData.js"></script>
+  <!-- Drawing + page wiring -->
+  <script src="js/heapView.js"></script>
+  <script src="js/timelineView.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
